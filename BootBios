@@ -1,0 +1,55 @@
+#!/bin/bash
+
+if [ -z "$1" ]
+then
+  echo "The arguments are (in order)"
+  echo "./BootBios WALLET_NAME [PERSONAL_ACCOUNT_NAME] [SMART_CONTRACT_ACCOUNT_NAME]"
+else
+  # Set up wallet
+  mkdir -p ~/eosio-wallet
+  rm -f ~/eosio-wallet/$1.wallet
+  cleos wallet create -n $1 > ~/"$1"-wallet-key
+  cleos wallet import -n $1 --private-key 5JLJHdV3sUEqJN1WGqiDgiagoCM4tPt5Wf2uK5qz1gcPXbGHx3x # Add the private key for starting nodeos, assuming you use the RunNodeosFresh script
+  cleos wallet import -n $1 --private-key $(cat ~/.local/share/eosio/nodeos/config/config.ini  | grep KEY | grep signature-provider | cut -d':' -f 2) # Add the private key for your nodeos configuration
+  cleos wallet unlock -n $1 --password $(cat ~/default-wallet-key | cut -d '"' -f 2 | cut -d$'\n' -f 4)
+  echo "cleos wallet unlock --password \$(cat ~/default-wallet-key | cut -d '\"' -f 2 | cut -d$'\n' -f 4)" > UnlockWallet
+
+  # Set up eosio accounts
+  accounts=(bpay msig names ram ramfee saving stake token vpay)
+  for i in  "${accounts[@]}"
+  do
+    foo=($(cleos create key))
+    cleos wallet import -n $1 --private-key ${foo[2]}
+    cleos create account eosio eosio.$i ${foo[5]} -p eosio
+  done
+
+  # Create tokens
+  cleos set contract eosio.token ~/eos/build/contracts/eosio.token
+  cleos set contract eosio.msig ~/eos/build/contracts/eosio.msig
+  cleos push action eosio.token create '[ "eosio", "10000000000.0000 SYS" ]' -p eosio.token
+  cleos push action eosio.token issue '[ "eosio", "1000000000.0000 SYS", "Issuing SYS tokens" ]' -p eosio
+  cleos set contract eosio ~/eos/build/contracts/eosio.system
+
+  if [ -z "$2" ]
+  then
+    echo "No personal account specified"
+  else
+    # Create your personal account
+    foo=($(cleos create key))
+    cleos wallet import -n $1 --private-key ${foo[2]}
+    cleos system newaccount eosio --transfer $2 ${foo[5]} --stake-net "100000.0000 SYS" --stake-cpu "100000.0000 SYS" --buy-ram "10 SYS"
+  fi
+
+  if [ -z "$3" ]
+  then
+    echo "No smart contract account specified"
+  else
+    # Create your smart contract account
+    foo=($(cleos create key))
+    cleos wallet import -n $1 --private-key ${foo[2]}
+    cleos system newaccount eosio --transfer $3 ${foo[5]} --stake-net "100000.0000 SYS" --stake-cpu "100000.0000 SYS" --buy-ram "1000 SYS"
+    echo "cleos set account permission $3 active '{\"threshold\": 1, \"keys\":[{\"key\":\"${foo[5]}\", \"weight\":1}], \"accounts\":[{\"permission\":{\"actor\":\"$3\",\"permission\":\"eosio.code\"},\"weight\":1}], \"waits\":[] }' owner -p $3" > SetAccountPermission
+    chmod +x SetAccountPermission
+    ./SetAccountPermission
+  fi
+fi
